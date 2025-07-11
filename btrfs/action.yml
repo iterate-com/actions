@@ -93,11 +93,6 @@ runs:
         ls -la ${RUNNER_TEMP}/workspace-cache 
         record_time "Workspace copy complete"
 
-        # Install pnpm and gh-act in background
-        record_time "Starting background installs (pnpm, gh-act)"
-        ( cd ${RUNNER_TEMP}/workspace-cache; corepack install && corepack enable pnpm ) &
-        PNPM_PID=$!
-
         # ---- tunables ---------------------------------------------------------------
         CHUNK_DIR="/mnt/btrfs_chunks"            # chunks live on the roomy /mnt filesystem
         SIZE_GB=${{ inputs.size-gb }}            # total size requested
@@ -197,11 +192,15 @@ runs:
         echo "Created and mounted Btrfs volume:"
         sudo btrfs filesystem usage -T "${MOUNTPOINT}"
         
+        record_time "Starting background installs (pnpm, gh-act)"
         # install gh-act in background
         ( gh extension install nektos/gh-act ) &
         GH_ACT_PID=$!
 
         record_time "Waiting for background installs"
+        # Install pnpm and gh-act in background
+        ( cd ${RUNNER_TEMP}/workspace-cache; corepack install && corepack enable pnpm ) &
+        PNPM_PID=$!
         wait $PNPM_PID || { echo "::error ::Failed to install pnpm"; exit 1; }
         corepack install
         record_time "pnpm install complete"
