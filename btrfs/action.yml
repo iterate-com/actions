@@ -197,15 +197,6 @@ runs:
         ( gh extension install nektos/gh-act ) &
         GH_ACT_PID=$!
 
-        record_time "Waiting for background installs"
-        # Install pnpm and gh-act in background
-        ( cd ${RUNNER_TEMP}/workspace-cache; corepack install && corepack enable pnpm ) &
-        PNPM_PID=$!
-        wait $PNPM_PID || { echo "::error ::Failed to install pnpm"; exit 1; }
-        corepack install
-        record_time "pnpm install complete"
-        wait $GH_ACT_PID || { echo "::error ::Failed to install gh-act"; exit 1; }
-        record_time "gh-act install complete"
         
         # Check if workspace directory exists
         record_time "Starting workspace restore"
@@ -222,6 +213,16 @@ runs:
         ls -la "${GITHUB_WORKSPACE}/.turbo/cache" | head -n 10 || echo "No turbo cache found"
         record_time "Workspace restore complete"
         
+        record_time "Waiting for background installs"
+        # Install pnpm and gh-act in background
+        ( cd ${GITHUB_WORKSPACE}; corepack install && corepack enable pnpm ) &
+        PNPM_PID=$!
+        wait $PNPM_PID || { echo "::error ::Failed to install pnpm"; exit 1; }
+        corepack install
+        record_time "pnpm install complete"
+        wait $GH_ACT_PID || { echo "::error ::Failed to install gh-act"; exit 1; }
+        record_time "gh-act install complete"
+
         # Final summary
         echo ""
         echo "===== TIMING SUMMARY ====="
