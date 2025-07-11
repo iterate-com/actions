@@ -1,0 +1,242 @@
+name: Setup BTRFS
+description: Composite action that sets up the BTRFS volume for the runner. This will also install npm.
+
+inputs:
+  size-gb:
+    description: "Size of the BTRFS volume to create"
+    required: true
+    default: "4"
+  key:
+    description: "The key to use for the cache"
+    required: true
+  restore-keys:
+    description: "The restore keys to use for the cache"
+    required: true
+
+outputs:
+  cache-hit:
+    description: "Whether the cache was hit"
+    value: ${{ steps.cache.outputs.cache-hit }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Prepare chunk directory
+      shell: bash
+      run: |
+        sudo install -d -o $(id -u) -g $(id -g) \
+            /mnt/btrfs_chunks
+
+    - uses: actions/cache/restore@v4
+      id: cache
+      with:
+        path: /mnt/btrfs_chunks
+        key: ${{ inputs.key }}
+        restore-keys: |
+          ${{ inputs.restore-keys }}
+
+    
+    - name: Fix permissions on restored chunks
+      if: steps.cache.outputs.cache-hit == 'true'
+      shell: bash
+      run: |
+        echo "Fixing permissions on restored chunk files"
+        if [ -n "$(ls -A /mnt/btrfs_chunks/*.img 2>/dev/null)" ]; then
+          # Ensure chunks have root ownership (matching fresh creation with sudo fallocate)
+          sudo chown -R root:root /mnt/btrfs_chunks/*.img
+          sudo chmod 644 /mnt/btrfs_chunks/*.img
+          # List files to verify
+          echo "Chunk files after permission fix:"
+          ls -la /mnt/btrfs_chunks/
+        fi
+        
+    - name: Setup BTRFS
+      shell: bash
+      working-directory: /mnt
+      run: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        export COREPACK_HOME="${GITHUB_WORKSPACE}/.corepack"
+        echo COREPACK_HOME="${COREPACK_HOME}" >> $GITHUB_ENV
+
+        # Timing function
+        START_TIME=$(date +%s.%N)
+        declare -A STEP_TIMES
+        
+        record_time() {
+          local step_name="$1"
+          local current_time=$(date +%s.%N)
+          local elapsed=$(echo "$current_time - $START_TIME" | bc -l)
+          STEP_TIMES["$step_name"]=$elapsed
+          printf "⏱️  [%.3fs] %s\n" "$elapsed" "$step_name"
+        }
+        
+        get_duration() {
+          local start_step="$1"
+          local end_step="$2"
+          local duration=$(echo "${STEP_TIMES[$end_step]} - ${STEP_TIMES[$start_step]}" | bc -l)
+          printf "%.3f" "$duration"
+        }
+
+        record_time "Script started"
+        echo "Setting up BTRFS volume"
+        ls -la "${GITHUB_WORKSPACE}"
+
+        record_time "Starting workspace copy"
+        echo "Copying ${GITHUB_WORKSPACE} to tmp"
+        mkdir -p ${RUNNER_TEMP}/workspace-cache
+        mv ${GITHUB_WORKSPACE}/* "${RUNNER_TEMP}/workspace-cache"
+        mv ${GITHUB_WORKSPACE}/.github "${RUNNER_TEMP}/workspace-cache"
+        echo "Contents of ${GITHUB_WORKSPACE}"
+        ls -la ${GITHUB_WORKSPACE}
+        echo "Contents of ${RUNNER_TEMP}/workspace-cache"
+        ls -la ${RUNNER_TEMP}/workspace-cache 
+        record_time "Workspace copy complete"
+
+        # Install pnpm and gh-act in background
+        record_time "Starting background installs (pnpm, gh-act)"
+        ( cd ${RUNNER_TEMP}/workspace-cache; corepack install && corepack enable pnpm ) &
+        PNPM_PID=$!
+
+        # ---- tunables ---------------------------------------------------------------
+        CHUNK_DIR="/mnt/btrfs_chunks"            # chunks live on the roomy /mnt filesystem
+        SIZE_GB=${{ inputs.size-gb }}            # total size requested
+        CHUNK_SIZE_GB=2                          # must stay ≤ 2 for artifact files
+        CHUNK_COUNT=$((SIZE_GB / CHUNK_SIZE_GB)) # calculate number of chunks needed
+        MOUNTPOINT="${GITHUB_WORKSPACE}"         # where you'll use it inside the job
+        LABEL="gha_btrfs"
+        MOUNT_OPTS="noatime,nodiscard,space_cache=v2"
+        PARALLEL_JOBS="$(($(nproc) > 1 ? $(nproc) : 1))"   # at least 1
+
+        # ---- install btrfs tools ----------------------------------------------------
+        record_time "Checking btrfs tools"
+        if ! command -v mkfs.btrfs &>/dev/null; then
+          record_time "Installing btrfs-progs"
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends btrfs-progs
+          record_time "btrfs-progs installed"
+        fi
+
+        # ---- create chunk directory -------------------------------------------------
+        record_time "Creating chunk directory"
+        sudo mkdir -p "${CHUNK_DIR}"
+
+        # ---- create any missing sparse files – in parallel -------------------------
+        record_time "Checking for missing chunks"
+        missing=()
+        for i in $(seq 0 $((CHUNK_COUNT - 1))); do
+          img="${CHUNK_DIR}/chunk${i}.img"
+          [[ -f "$img" ]] || missing+=("$img")
+        done
+
+        if ((${#missing[@]})); then
+          echo "::notice ::Creating ${#missing[@]} new chunk files in parallel"
+          record_time "Starting chunk creation"
+          printf '%s\0' "${missing[@]}" |
+            xargs -0 -P "${PARALLEL_JOBS}" -I{} sudo fallocate -l "${CHUNK_SIZE_GB}G" "{}"
+          record_time "Chunk creation complete"
+          created_new_fs=true
+        else
+          echo "::notice ::Chunk files already exist"
+          created_new_fs=false
+        fi
+
+        # ---- map all chunks to loop devices – sequentially for deterministic order -
+        declare -a LOOP_DEVS=()
+        echo "Mapping chunks to loop devices..."
+        record_time "Starting loop device mapping"
+        for img in $(printf '%s\n' "${CHUNK_DIR}"/chunk*.img | sort); do
+          echo "  Mapping: $img"
+          LOOP_DEVS+=($(sudo losetup --find --show "$img"))
+        done
+        echo "Loop devices: ${LOOP_DEVS[@]}"
+        record_time "Loop device mapping complete"
+
+        # ---- format only on a true cache/artifact miss -----------------------------
+        if $created_new_fs; then
+          echo "::notice ::Formatting fresh multi-device Btrfs volume"
+          record_time "Starting BTRFS format"
+          sudo mkfs.btrfs -f -K -m single -d single -L "${LABEL}" "${LOOP_DEVS[@]}"
+          record_time "BTRFS format complete"
+        else
+          echo "::notice ::Using existing BTRFS filesystem from cache"
+          echo "Loop devices mapped: ${LOOP_DEVS[@]}"
+          # Show BTRFS filesystem info if available
+          sudo btrfs filesystem show 2>/dev/null || echo "No BTRFS filesystems found yet"
+        fi
+
+        # ---- mount and hand over ownership to the 'runner' user --------------------
+        record_time "Preparing mount"
+        sudo mkdir -p "${MOUNTPOINT}"
+        
+        # Scan for btrfs devices BEFORE mounting (important for cache hits)
+        echo "Scanning for BTRFS devices..."
+        record_time "Starting BTRFS device scan"
+        sudo btrfs device scan || echo "::warning ::btrfs device scan returned non-zero exit code"
+        record_time "BTRFS device scan complete"
+        
+        # Show detected filesystems after scan
+        echo "BTRFS filesystems after scan:"
+        sudo btrfs filesystem show 2>/dev/null || echo "No BTRFS filesystems detected"
+        
+        # retry once on failure
+        echo "Running mount command: sudo mount -o ${MOUNT_OPTS} ${LOOP_DEVS[0]} ${MOUNTPOINT}"
+        ls -la "${LOOP_DEVS[0]}"
+        ls -la "${MOUNTPOINT}"
+        record_time "Starting BTRFS mount"
+        sudo mount -o "${MOUNT_OPTS}" "${LOOP_DEVS[0]}" "${MOUNTPOINT}" || ( echo "::error ::Failed to mount Btrfs volume, retrying..." && sleep 2 && sudo mount -o "${MOUNT_OPTS}" "${LOOP_DEVS[0]}" "${MOUNTPOINT}" )
+        record_time "BTRFS mount complete"
+        
+        # ---- set ownership and verify ----------------------------------------------
+        record_time "Setting ownership"
+        RUNNER_UID=$(id -u runner)      # 1001 on GH-hosted runners
+        RUNNER_GID=$(id -g runner)
+        sudo chown "${RUNNER_UID}:${RUNNER_GID}" "${MOUNTPOINT}"
+        
+        # ---- verify -----------------------------------------------------------------
+        echo "Created and mounted Btrfs volume:"
+        sudo btrfs filesystem usage -T "${MOUNTPOINT}"
+        
+        # install gh-act in background
+        ( gh extension install nektos/gh-act ) &
+        GH_ACT_PID=$!
+
+        record_time "Waiting for background installs"
+        wait $PNPM_PID || { echo "::error ::Failed to install pnpm"; exit 1; }
+        corepack install
+        record_time "pnpm install complete"
+        wait $GH_ACT_PID || { echo "::error ::Failed to install gh-act"; exit 1; }
+        record_time "gh-act install complete"
+        
+        # Check if workspace directory exists
+        record_time "Starting workspace restore"
+        if [ ! -d "${GITHUB_WORKSPACE}" ]; then
+          echo "::error ::Workspace directory does not exist"
+          exit 1
+        else
+          echo "::notice ::Workspace directory exists"
+          cp -r "${RUNNER_TEMP}/workspace-cache/.github" "${GITHUB_WORKSPACE}"
+          cp -r $RUNNER_TEMP/workspace-cache/* "${GITHUB_WORKSPACE}"
+          ls -la "${GITHUB_WORKSPACE}"
+        fi
+
+        ls -la "${GITHUB_WORKSPACE}/.turbo/cache" | head -n 10 || echo "No turbo cache found"
+        record_time "Workspace restore complete"
+        
+        # Final summary
+        echo ""
+        echo "===== TIMING SUMMARY ====="
+        echo "Total time: $(get_duration "Script started" "Workspace restore complete")s"
+        echo ""
+        echo "Major operations:"
+        echo "  Workspace copy: $(get_duration "Starting workspace copy" "Workspace copy complete")s"
+        if [[ "${created_new_fs}" == "true" ]]; then
+          echo "  Chunk creation: $(get_duration "Starting chunk creation" "Chunk creation complete")s"
+          echo "  BTRFS format: $(get_duration "Starting BTRFS format" "BTRFS format complete")s"
+        fi
+        echo "  Loop device mapping: $(get_duration "Starting loop device mapping" "Loop device mapping complete")s"
+        echo "  BTRFS mount: $(get_duration "Starting BTRFS mount" "BTRFS mount complete")s"
+        echo "  Background installs: $(get_duration "Starting background installs (pnpm, gh-act)" "gh-act install complete")s"
+        echo "  Workspace restore: $(get_duration "Starting workspace restore" "Workspace restore complete")s"
+        echo "=========================="
+        
