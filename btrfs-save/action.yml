@@ -1,0 +1,47 @@
+name: Save BTRFS
+description: Composite action that sets up the BTRFS volume for the runner
+inputs:
+  key:
+    description: The key to use for the cache
+    required: true
+  cache-hit:
+    description: Whether the cache was hit during setup
+    required: false
+    default: 'false'
+
+runs:
+  using: "composite"
+  steps:
+    
+    - name: Check cache status
+      shell: bash
+      run: |
+        if [[ "${{ inputs.cache-hit }}" == "true" ]]; then
+          echo "::notice ::Cache was hit during setup. Skipping cache save."
+        else
+          echo "::notice ::Cache was not hit during setup. Proceeding with cache save."
+        fi
+    
+    - name: Prune pnpm store
+      if: inputs.cache-hit != 'true'
+      shell: bash
+      run: pnpm store prune
+
+    - name: Freeze BTRFS
+      if: inputs.cache-hit != 'true'
+      shell: bash
+      working-directory: /mnt
+      run: sudo fsfreeze -f "${GITHUB_WORKSPACE}"
+
+    - name: Upload BTRFS Chunks
+      if: inputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: /mnt/btrfs_chunks
+        key: ${{ inputs.key }}
+
+    - name: Unfreeze BTRFS
+      if: inputs.cache-hit != 'true'
+      shell: bash
+      working-directory: /mnt
+      run: sudo fsfreeze -u "${GITHUB_WORKSPACE}"
