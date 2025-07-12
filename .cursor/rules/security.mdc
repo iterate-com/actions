@@ -1,0 +1,172 @@
+# GitHub Actions Security Guidelines
+
+## Overview
+This document provides security guidelines for GitHub Actions to prevent sensitive information leakage and maintain secure CI/CD practices.
+
+## 🚨 Critical Security Rules
+
+### 1. Environment Variable Protection
+- **NEVER** use `printenv` or `env` commands that dump all environment variables
+- **NEVER** use `set -x` or `set -v` bash flags that expose command execution details
+- **NEVER** echo or log environment variables containing sensitive data
+- **ALWAYS** validate that any logged environment variables contain only non-sensitive paths or configuration
+
+### 2. Secret Handling
+- **NEVER** log `secrets.*` values directly
+- **NEVER** use secrets in command arguments that might be logged
+- **NEVER** store secrets in temporary files that might be readable
+- **ALWAYS** use GitHub's built-in secret masking by referencing secrets properly
+- **ALWAYS** use `::add-mask::` to mask dynamic sensitive values
+
+### 3. Debug Information
+- **NEVER** enable verbose logging modes that might expose sensitive data
+- **NEVER** use debug flags without understanding their output implications
+- **ALWAYS** review debug output before enabling in production workflows
+- **ALWAYS** use appropriate GitHub Actions logging levels (`::notice::`, `::warning::`, `::error::`)
+
+### 4. Command Execution Logging
+- **NEVER** log complete command lines that might contain sensitive parameters
+- **NEVER** use `bash -x` or similar debug modes in production
+- **ALWAYS** sanitize command output before logging
+- **ALWAYS** be cautious with error messages that might expose sensitive information
+
+## ✅ Safe Logging Practices
+
+### What's Safe to Log:
+- File paths (when not containing sensitive data)
+- Directory listings (when not exposing secrets)
+- Timing and performance metrics
+- Status messages and progress indicators
+- System information (OS, tool versions)
+- Non-sensitive configuration values
+
+### Approved Logging Patterns:
+```bash
+# ✅ Safe - logging status
+echo "::notice::Starting deployment process"
+
+# ✅ Safe - logging non-sensitive paths
+echo "Working directory: ${GITHUB_WORKSPACE}"
+
+# ✅ Safe - logging timing information
+echo "Operation completed in ${duration}s"
+
+# ✅ Safe - logging system information
+echo "Using $(node --version)"
+```
+
+### 🚫 Dangerous Logging Patterns:
+```bash
+# 🚫 NEVER - dumps all environment variables
+printenv
+
+# 🚫 NEVER - enables command tracing
+set -x
+
+# 🚫 NEVER - logs secrets
+echo "API Key: ${{ secrets.API_KEY }}"
+
+# 🚫 NEVER - logs sensitive environment variables
+echo "Database URL: ${DATABASE_URL}"
+
+# 🚫 NEVER - logs command with potentially sensitive args
+echo "Running: $command_with_secrets"
+```
+
+## 🔐 Input Validation
+
+### Required Validations:
+- **ALWAYS** validate input parameters to prevent injection attacks
+- **ALWAYS** sanitize user-provided inputs before using in commands
+- **ALWAYS** use parameter expansion with proper quoting
+- **NEVER** directly interpolate user inputs into shell commands
+
+### Input Validation Examples:
+```bash
+# ✅ Good - validated input
+if [[ ! "${{ inputs.size-gb }}" =~ ^[0-9]+$ ]]; then
+  echo "::error::Invalid size-gb input"
+  exit 1
+fi
+
+# ✅ Good - proper quoting
+mkdir -p "${{ inputs.directory }}"
+
+# 🚫 Bad - unvalidated input
+fallocate -l "${{ inputs.size-gb }}G" file.img
+```
+
+## 🛡️ Error Handling
+
+### Secure Error Handling:
+- **ALWAYS** sanitize error messages before logging
+- **NEVER** expose file contents in error messages
+- **NEVER** log stack traces that might contain sensitive data
+- **ALWAYS** use generic error messages for user-facing outputs
+
+### Error Handling Examples:
+```bash
+# ✅ Good - sanitized error
+if ! mount "${device}" "${mountpoint}"; then
+  echo "::error::Failed to mount device"
+  exit 1
+fi
+
+# 🚫 Bad - might expose sensitive info
+if ! mount "${device}" "${mountpoint}"; then
+  echo "::error::Mount failed: $(cat /var/log/mount.log)"
+  exit 1
+fi
+```
+
+## 📋 Pre-Commit Checklist
+
+Before committing GitHub Actions changes:
+
+- [ ] No `printenv`, `env`, or similar commands
+- [ ] No `set -x`, `set -v`, or debug flags
+- [ ] No direct logging of `secrets.*` values
+- [ ] No logging of sensitive environment variables
+- [ ] All inputs are validated and sanitized
+- [ ] Error messages don't expose sensitive information
+- [ ] Only approved logging patterns are used
+- [ ] Debug output has been reviewed if enabled
+
+## 🔍 Security Review Process
+
+### Regular Audits:
+1. **Monthly Review**: Check all workflow files for security issues
+2. **Change Review**: Security review required for all workflow changes
+3. **Dependency Review**: Audit third-party actions for security issues
+4. **Log Review**: Periodically review workflow logs for accidental exposures
+
+### Automated Checks:
+- Use GitHub's secret scanning
+- Enable dependency vulnerability alerts
+- Use workflow security analysis tools
+- Set up alerts for sensitive pattern detection
+
+## 📚 Additional Resources
+
+### GitHub Documentation:
+- [GitHub Actions Security Guide](https://docs.github.com/en/actions/security-guides)
+- [Using Secrets in GitHub Actions](https://docs.github.com/en/actions/security-guides/using-secrets-in-github-actions)
+- [Security Hardening for GitHub Actions](https://docs.github.com/en/actions/security-guides/security-hardening-for-github-actions)
+
+### Security Tools:
+- [GitHub Secret Scanning](https://docs.github.com/en/code-security/secret-scanning)
+- [Dependabot Security Updates](https://docs.github.com/en/code-security/dependabot)
+- [CodeQL Security Analysis](https://docs.github.com/en/code-security/code-scanning)
+
+## 📞 Incident Response
+
+If sensitive information is accidentally logged:
+1. **Immediately** disable the workflow
+2. **Rotate** any exposed secrets
+3. **Review** all workflow logs for exposures
+4. **Update** the workflow to prevent recurrence
+5. **Document** the incident and remediation steps
+
+---
+
+**Remember**: When in doubt, don't log it. It's better to have less debugging information than to accidentally expose sensitive data.
