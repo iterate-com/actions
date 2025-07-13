@@ -26,7 +26,7 @@ runs:
     - name: Git empty and Prune pnpm store
       if: inputs.cache-hit != 'true'
       shell: bash
-      run: git gc && ( git checkout origin/empty || git ls-files -z | xargs -0 rm -f ) && pnpm store prune
+      run: git gc && ( git fetch origin empty --depth=1 && git checkout origin/empty || git ls-files -z | xargs -0 rm -f ) && pnpm store prune
 
     - name: Freeze BTRFS
       if: inputs.cache-hit != 'true'
