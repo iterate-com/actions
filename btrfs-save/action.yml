@@ -22,10 +22,11 @@ runs:
           echo "::notice ::Cache was not hit during setup. Proceeding with cache save."
         fi
     
-    - name: Prune pnpm store
+    # We have to clear out git tracked files to avoid them being saved to the cache and causing confusion.
+    - name: Git empty and Prune pnpm store
       if: inputs.cache-hit != 'true'
       shell: bash
-      run: pnpm store prune
+      run: git gc && ( git checkout empty || git ls-files -z | xargs -0 rm ) && pnpm store prune
 
     - name: Freeze BTRFS
       if: inputs.cache-hit != 'true'
