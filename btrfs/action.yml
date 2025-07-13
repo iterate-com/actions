@@ -87,6 +87,7 @@ runs:
         mkdir -p ${RUNNER_TEMP}/workspace-cache
         mv ${GITHUB_WORKSPACE}/* "${RUNNER_TEMP}/workspace-cache"
         mv ${GITHUB_WORKSPACE}/.github "${RUNNER_TEMP}/workspace-cache"
+        mv ${GITHUB_WORKSPACE}/.git "${RUNNER_TEMP}/workspace-cache"
         echo "Contents of ${GITHUB_WORKSPACE}"
         ls -la ${GITHUB_WORKSPACE}
         echo "Contents of ${RUNNER_TEMP}/workspace-cache"
@@ -206,6 +207,7 @@ runs:
         else
           echo "::notice ::Workspace directory exists"
           cp -r "${RUNNER_TEMP}/workspace-cache/.github" "${GITHUB_WORKSPACE}"
+          cp -r "${RUNNER_TEMP}/workspace-cache/.git" "${GITHUB_WORKSPACE}"
           cp -r $RUNNER_TEMP/workspace-cache/* "${GITHUB_WORKSPACE}"
           ls -la "${GITHUB_WORKSPACE}"
         fi
