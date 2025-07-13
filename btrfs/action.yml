@@ -206,8 +206,8 @@ runs:
           exit 1
         else
           echo "::notice ::Workspace directory exists"
-          cp -r "${RUNNER_TEMP}/workspace-cache/.github" "${GITHUB_WORKSPACE}"
           cp -r "${RUNNER_TEMP}/workspace-cache/.git" "${GITHUB_WORKSPACE}"
+          cp -r "${RUNNER_TEMP}/workspace-cache/.github" "${GITHUB_WORKSPACE}"
           cp -r $RUNNER_TEMP/workspace-cache/* "${GITHUB_WORKSPACE}"
           ls -la "${GITHUB_WORKSPACE}"
         fi
@@ -224,6 +224,11 @@ runs:
         wait $GH_ACT_PID || { echo "::error ::Failed to install gh-act"; exit 1; }
         record_time "gh-act install complete"
 
+        pushd "${GITHUB_WORKSPACE}"
+        git checkout .
+        git status
+        popd
+        
         # Final summary
         echo ""
         echo "===== TIMING SUMMARY ====="
