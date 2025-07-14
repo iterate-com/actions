@@ -206,9 +206,12 @@ runs:
           exit 1
         else
           echo "::notice ::Workspace directory exists"
-          cp -r "${RUNNER_TEMP}/workspace-cache/.git" "${GITHUB_WORKSPACE}"
-          cp -r "${RUNNER_TEMP}/workspace-cache/.github" "${GITHUB_WORKSPACE}"
-          cp -r $RUNNER_TEMP/workspace-cache/* "${GITHUB_WORKSPACE}"
+          # Use sudo to copy files to avoid permission issues with git pack files
+          sudo cp -r "${RUNNER_TEMP}/workspace-cache/.git" "${GITHUB_WORKSPACE}"
+          sudo cp -r "${RUNNER_TEMP}/workspace-cache/.github" "${GITHUB_WORKSPACE}"
+          sudo cp -r $RUNNER_TEMP/workspace-cache/* "${GITHUB_WORKSPACE}"
+          # Fix ownership after copying
+          sudo chown -R "${RUNNER_UID}:${RUNNER_GID}" "${GITHUB_WORKSPACE}"
           ls -la "${GITHUB_WORKSPACE}"
         fi
 
