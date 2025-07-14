@@ -28,7 +28,15 @@ runs:
       id: prune
       continue-on-error: true
       shell: bash
-      run: git fetch --unshallow && git gc && ( git fetch origin empty --depth=1 && git checkout origin/empty || git ls-files -z | xargs -0 rm -f ) && pnpm store prune
+      run: | # Clean up unreachable objects
+        git prune --expire="1 week ago" && echo "Pruned unreachable objects"
+        git remote prune origin && echo "pruned remote tracking branches"
+        git reflog expire --expire="1 week ago" --all && echo "expired reflog entries"
+        ( git for-each-ref --format="%(refname)" refs/original/ | xargs -n 1 git update-ref -d 2>/dev/null ) && echo "removed stale references"
+        
+        git fetch origin empty --depth=1 && echo "fetched empty"
+        ( git checkout origin/empty && echo "checked out empty" ) || ( git ls-files -z | xargs -0 rm -f && echo "removed tracked files" )
+        pnpm store prune && echo "pruned pnpm store"
 
     - name: Freeze BTRFS
       if: inputs.cache-hit != 'true' && steps.prune.outcome == 'success'
