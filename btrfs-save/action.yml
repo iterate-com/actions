@@ -28,7 +28,7 @@ runs:
       id: prune
       continue-on-error: true
       shell: bash
-      run: git config gc.auto 0 && git gc && ( git fetch origin empty --depth=1 && git checkout origin/empty || git ls-files -z | xargs -0 rm -f ) && pnpm store prune
+      run: git reflog expire --expire-unreachable=now --all && git gc && ( git fetch origin empty --depth=1 && git checkout origin/empty || git ls-files -z | xargs -0 rm -f ) && pnpm store prune
 
     - name: Freeze BTRFS
       if: inputs.cache-hit != 'true' && steps.prune.outcome == 'success'
