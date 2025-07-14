@@ -25,24 +25,26 @@ runs:
     # We have to clear out git tracked files to avoid them being saved to the cache and causing confusion.
     - name: Git empty and Prune pnpm store
       if: inputs.cache-hit != 'true'
+      id: prune
+      continue-on-error: true
       shell: bash
-      run: git gc && ( git fetch origin empty --depth=1 && git checkout origin/empty || git ls-files -z | xargs -0 rm -f ) && pnpm store prune
+      run: git config gc.auto 0 && git gc && ( git fetch origin empty --depth=1 && git checkout origin/empty || git ls-files -z | xargs -0 rm -f ) && pnpm store prune
 
     - name: Freeze BTRFS
-      if: inputs.cache-hit != 'true'
+      if: inputs.cache-hit != 'true' && steps.prune.outcome == 'success'
       shell: bash
       working-directory: /mnt
       run: sudo fsfreeze -f "${GITHUB_WORKSPACE}"
 
     - name: Upload BTRFS Chunks
-      if: inputs.cache-hit != 'true'
+      if: inputs.cache-hit != 'true' && steps.prune.outcome == 'success'
       uses: actions/cache/save@v4
       with:
         path: /mnt/btrfs_chunks
         key: ${{ inputs.key }}
 
     - name: Unfreeze BTRFS
-      if: inputs.cache-hit != 'true'
+      if: inputs.cache-hit != 'true' && steps.prune.outcome == 'success'
       shell: bash
       working-directory: /mnt
       run: sudo fsfreeze -u "${GITHUB_WORKSPACE}"
