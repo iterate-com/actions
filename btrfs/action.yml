@@ -187,7 +187,7 @@ runs:
         record_time "Setting ownership"
         RUNNER_UID=$(id -u runner)      # 1001 on GH-hosted runners
         RUNNER_GID=$(id -g runner)
-        sudo chown "${RUNNER_UID}:${RUNNER_GID}" "${MOUNTPOINT}"
+        sudo chown -R "${RUNNER_UID}:${RUNNER_GID}" "${MOUNTPOINT}"
         
         # ---- verify -----------------------------------------------------------------
         echo "Created and mounted Btrfs volume:"
