@@ -38,6 +38,21 @@ runs:
         ( git checkout origin/empty && echo "checked out empty" ) || ( git ls-files -z | xargs -0 rm -f && echo "removed tracked files" )
         pnpm store prune && echo "pruned pnpm store"
 
+    - name: Prefix key
+      if: inputs.cache-hit != 'true' && steps.prune.outcome == 'success'
+      id: prefix-cache-key
+      uses: actions/github-script@v7
+      env:
+        BASE_KEY: ${{ inputs.key }}
+      with:
+        script: |
+          if(!process.env.GITHUB_REPOSITORY) {
+            throw new Error('GITHUB_REPOSITORY is not set');
+          }
+          const repoPrefix = `${process.env.GITHUB_REPOSITORY}-`;
+          const key = `${repoPrefix}${process.env.BASE_KEY}`;
+          core.setOutput('key', key);
+
     - name: Freeze BTRFS
       if: inputs.cache-hit != 'true' && steps.prune.outcome == 'success'
       shell: bash
@@ -49,7 +64,7 @@ runs:
       uses: actions/cache/save@v4
       with:
         path: /mnt/btrfs_chunks
-        key: ${{ inputs.key }}
+        key: ${{ steps.prefix-cache-key.outputs.key }}
 
     - name: Unfreeze BTRFS
       if: inputs.cache-hit != 'true' && steps.prune.outcome == 'success'
