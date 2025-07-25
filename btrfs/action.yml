@@ -27,13 +27,37 @@ runs:
         sudo install -d -o $(id -u) -g $(id -g) \
             /mnt/btrfs_chunks
 
+    - name: Prefix keys
+      id: prefix-cache-keys
+      uses: actions/github-script@v7
+      env:
+        BASE_KEY: ${{ inputs.key }}
+        RESTORE_KEYS_RAW: ${{ inputs.restore-keys }}
+      with:
+        script: |
+          if(!process.env.GITHUB_REPOSITORY) {
+            throw new Error('GITHUB_REPOSITORY is not set');
+          }
+          const repoPrefix = `${process.env.GITHUB_REPOSITORY}-`;
+
+          // prepend repo to the primary key
+          const key = `${repoPrefix}${process.env.BASE_KEY}`;
+
+          // prepend repo to *every* non-blank line of restore-keys
+          const restoreKeys = process.env.RESTORE_KEYS_RAW
+            .split(/\r?\n/)        // keep Windows & *nix newlines
+            .filter(Boolean)       // drop empty lines
+            .map(k => `${repoPrefix}${k}`)
+            .join('\n');           // turn back into the multiline string the cache action expects
+
+          core.setOutput('key', key);
+          core.setOutput('restore-keys', restoreKeys);
     - uses: actions/cache/restore@v4
       id: cache
       with:
         path: /mnt/btrfs_chunks
-        key: ${{ inputs.key }}
-        restore-keys: |
-          ${{ inputs.restore-keys }}
+        key: ${{ steps.prefix-cache-keys.outputs.key }}
+        restore-keys: ${{ steps.prefix-cache-keys.outputs.restore-keys }}
 
     
     - name: Fix permissions on restored chunks
